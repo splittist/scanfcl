@@ -659,3 +659,11 @@ therefore we can scan with "%x: %8x %8x %4x %2x %5lu %s"
         (*result* '()))
     (funcall (compile nil scanner))
     (reverse *result*)))
+
+(defclass my-converter (standard-converter)
+  ())
+
+(defmethod make-conversion-scanner ((converter my-converter) (cs (eql :|u|))
+                                    suppressp field-width length-modifier)
+  (let ((form (make-integer-scanner suppressp field-width length-modifier :radix 10)))
+    (subst `(convert-to-type (* sign result) :unsigned-int) '(* sign result) form :test #'equal)))

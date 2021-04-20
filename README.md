@@ -23,7 +23,9 @@ SCANFCL> (sscanf "-INFINITY NAN 0xDEAD.BEEFpFF" "%Lf %f %lf")
 
 ## Introduction
 
-Sometimes you just want to reproduce the effect of `C`-style `scanf` input without having to write your own parser. **scanfcl** reproduces the effect of `sscanf` conversion from lisp strings to lisp objects. The standard 'C99' conversion specifiers are supported.
+Sometimes you just want to reproduce the effect of `C`-style `scanf` input without having to write your own parser. **scanfcl** reproduces the effect of `sscanf` conversion from lisp strings to lisp objects. Most of the standard 'C99' conversion specifiers are supported.
+
+**scanfcl** depends on [Float Features](https://shinmera.github.io/float-features/) and has an MIT licence.
 
 ## Functions
 
@@ -68,7 +70,7 @@ Therefore we can scan lines with the *control-string*:
 For example:
 
 ```lisp
-SCANFCL> (sscanf "000000004713b902: 00000002 00000000 00010000 0005 01 19462 /run/WSL/8_interop" 
+SCANFCL> (sscanf "000000004713b902: 00000002 00000000 00010000 0005 01 19462 /run/WSL/8_interop"
                  "%x: %8x %8x %8x %4x %2x %5lu %s")
 
 (1192474882 2 0 65536 5 1 19462 "/run/WSL/8_interop")
@@ -105,3 +107,39 @@ Return two values: the *field width* (if any) specified in `control-string` star
 *generic function* **MAKE-CONVERSION-SCANNER** `converter` `conversion-specifier` `suppressp` `field-width` `length-modifers`
 
 Return a scanner, a function of no arguments returning an appropriate value from `*string*` given the arguments.
+
+## Example of Configuration
+
+Users of languages with C-like numerical conversion semantics will sometimes represent unsigned values as signed values in external formats. Most commonly, the most-positive unsigned value will be represented as `-1`. If we are faced with reading input that depends on this behaviour, **scanfcl** allows us to create our own converter and perform surgery upon the generated scanner form to achieve the appropriate result.
+
+For example, the `u` *conversion specifier* could be implemented as follows:
+
+```lisp
+(defclass my-converter (standard-converter)
+  ())
+
+(defmethod make-conversion-scanner ((converter my-converter) (cs (eql :|u|))
+                                    suppressp field-width length-modifier)
+  (let ((form (make-integer-scanner suppressp field-width length-modifier :radix 10)))
+    (subst '(convert-to-type (* sign result) :unsigned-int) '(* sign result) form :test #'equal)))
+```
+(Where `CONVERT-TO-TYPE` eventually does something like `(mod num (expt 2 bits))` for `:unsigned-int`, with `bits` as 32 in the System V ABI. See the file `scanfcl.lisp` for a possible, and more general, implementation.)
+
+```lisp
+SCANFCL> (let ((*converter* (make-instance 'my-converter)))
+           (compile-control-string "%u"))
+
+#<FUNCTION (LAMBDA ()) {100421D53B}>
+NIL
+NIL
+
+SCANFCL> (sscanf "-1" *)
+
+(4294967295)
+
+SCANFCL> (let ((*print-base* 16)) (print (car *)))
+
+FFFFFFFF 
+4294967295
+````
+
