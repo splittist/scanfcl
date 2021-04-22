@@ -1,45 +1,31 @@
-(defpackage #:scanfcl
-  (:use #:cl))
-
-;; multiple-value-scanf (vars)
-;;   scanner
-;; bind vars to result of scanf-ing - first var is count of scans?
-
 (in-package #:scanfcl)
 
-(defmacro with-input-string ((input-string) &body form)
-  `(let ((*string* ,input-string)
-         (*index* 0)
-         (*limit* (length ,input-string))
-         (*result* '()))
-     ,@form
-     (reverse *result*)))
+(defun sscanf (input-string control-string)
+  "Parses formatted input text, reading characters from *input-string* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *scanner* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-string* as a list."
+  (with-input-from-string (*standard-input* input-string)
+    (scanf control-string)))
+
+(defun fscanf (input-stream control-string)
+  "Parses formatted input text, reading characters from *input-stream* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *scanner* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-stream* as a list."
+  (let ((*standard-input* input-stream))
+    (scanf control-string)))
+
+(defparameter *result* nil
+  "The results of scanning `*string*` so far.")
+
+(defun scanf (control-string)
+  "Parses formatted iput text, reading characters from `*STANDARD-INPUT*` and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *scanner* (see `COMPILE-CONTROL-STRING`). Returns the items converted from `*STANDARD-INPUT*` as a list."
+  (let ((control-string
+          (etypecase control-string
+            (string (compile-control-string control-string))
+            (function control-string)))
+        (*result* '()))
+    (funcall control-string)
+    (values (reverse *result*) (file-position *standard-input*))))
 
 (defun compile-control-string (control-string)
-  "Returns a function suitable for passing to `SSCANF`"
+  "Returns a function suitable for passing to `SCANF`, `SSCANF` and `FSCANF`."
   (compile nil (create-scanner control-string)))
-
-(defgeneric sscanf (input-string control-string)
-  (:documentation "Parses formatted input text, reading characters from *input-string* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *scanner* (see `CREATE-SCANNER`). Returns the items converted from the *input-string* as a list."))
-
-(defmethod sscanf (input-string (control-string string))
-  (with-input-string (input-string)
-    (funcall (compile-control-string control-string))))
-
-(defmethod sscanf (input-string (control-string function))
-  (with-input-string (input-string)
-    (funcall control-string)))
-
-#+(or)(define-compiler-macro sscanf (&whole form input-string control-string)
-  (if (stringp control-string)
-      `(sscanf ,input-string ,(compile-control-string control-string))
-      form))
-
-#+(or)(defun fscanf (input-stream control-string)
-  )
-
-#+(or)(defun scanf (control-string)
-  )
 
 ;;; conversion specification
 ;;; #\% followed by:
@@ -213,9 +199,6 @@
 (defparameter *limit* nil
   "The limiting index of `*string*`")
 
-(defparameter *result* nil
-  "The results of scanning `*string*` so far.")
-
 (defun forward ()
   (incf *index*))
 
@@ -234,7 +217,8 @@
   (peek-char nil *standard-input* nil nil))
 
 (defun looking-at (char)
-  (char= char (peek-char nil *standard-input* nil nil)))
+  (let ((peek (peek-char nil *standard-input* nil nil)))
+    (and peek (char= char peek))))
 
 (defparameter *whitespace* (coerce (list #\Space #\Newline #\Return #\Tab #\Vt #\Ff) 'string))
 
@@ -264,60 +248,64 @@
          (warn "Couldn't match char '~C'" ,char))))
 
 (defun make-integer-scanner (suppressp field-width length-modifier &key radix)
+  (declare (ignore length-modifier))
   `(lambda ()
      ,(skip-ws)
      (let ((sign 1)
-           (result 0))
-       (cond ((looking-at #\+)
-              (forward))
-             ((looking-at #\-)
-              (setf sign -1)
-              (forward)))
-       ,@(when (and radix (= radix 16))
-          '((when (looking-at #\0)
-              (forward)
-              (when (or (looking-at #\x)
-                        (looking-at #\X))
-                (forward)))))
-       (if (digit-char-p (current) ,radix)
-           (loop for char = (current)
-                 ,@(when field-width '(for count from 1))
-              until (or (null char)
-                        (not (digit-char-p char ,radix))
-                        ,@(when field-width `((> count ,field-width))))
-                 do (setf result (+ (* result ,radix) (digit-char-p char ,radix)))
-                    (forward)
-                 finally ,(if suppressp '(values) '(push (* sign result) *result*)))
-           (warn "Can't match %d, got '~A'" (current))))))
+           (result 0)
+           (limit ,(if field-width field-width -1)))
+       (labels ((forward* () (forward) (decf limit)))
+         (cond ((looking-at #\+)
+                (forward*))
+               ((looking-at #\-)
+                (setf sign -1)
+                (forward*)))
+         ,@(when (and radix (= radix 16))
+             '((when (looking-at #\0)
+                 (forward*)
+                 (when (or (looking-at #\x)
+                           (looking-at #\X))
+                   (forward*)))))
+         (if (digit-char-p (current) ,radix)
+             (loop for char = (current)
+                   until (or (null char)
+                             (not (digit-char-p char ,radix))
+                             (zerop limit))
+                   do (setf result (+ (* result ,radix) (digit-char-p char ,radix)))
+                      (forward*)
+                   finally ,(if suppressp '(values) '(push (* sign result) *result*)))
+             (warn "Can't match %d, got '~A'" (current)))))))
 
 (defun make-signed-integer-scanner (suppressp field-width length-modifier)
+  (declare (ignore length-modifier))
   `(lambda ()
      ,(skip-ws)
      (let ((sign 1)
            (radix 10)
-           (result 0))
-       (cond ((looking-at #\+)
-              (forward))
-             ((looking-at #\-)
-              (setf sign -1)
-              (forward)))
-       (when (looking-at #\0)
-         (forward)
-         (setf radix 8)
-         (when (or (looking-at #\x)
-                   (looking-at #\X))
-           (forward)
-           (setf radix 16)))
-       (if (digit-char-p (current) radix)
-           (loop for char = (current)
-                ,@(when field-width '(for count from 1))
-              until (or (null char)
-                        (not (digit-char-p char radix))
-                        ,@(when field-width `((> count ,field-width))))
-                 do (setf result (+ (* result radix) (digit-char-p char radix)))
-                    (forward)
-                 finally ,(if suppressp '(values) '(push (* sign result) *result*))))
-       (warn "Can't match %i, got '~A'" (current)))))
+           (result 0)
+           (limit ,(if field-width field-width -1)))
+       (labels ((forward* () (forward) (decf limit)))
+         (cond ((looking-at #\+)
+                (forward*))
+               ((looking-at #\-)
+                (setf sign -1)
+                (forward*)))
+         (when (looking-at #\0)
+           (forward*)
+           (setf radix 8)
+           (when (or (looking-at #\x)
+                     (looking-at #\X))
+             (forward*)
+             (setf radix 16)))
+         (if (digit-char-p (current) radix)
+             (loop for char = (current)
+                   until (or (null char)
+                             (not (digit-char-p char radix))
+                             (zerop limit))
+                   do (setf result (+ (* result radix) (digit-char-p char radix)))
+                      (forward)
+                   finally ,(if suppressp '(values) '(push (* sign result) *result*))))
+         (warn "Can't match %i, got '~A'" (current))))))
 
 (defun make-floating-point-scanner (suppressp field-width length-modifier)
   `(lambda ()
@@ -379,7 +367,7 @@
                     (when (and (not (zerop limit))
                                (or (looking-at #\x)
                                    (looking-at #\X)))
-                      (forward)
+                      (forward*)
                       (setf radix 16
                             exponent-marker #\p)))
                   (loop for char = (current)
@@ -402,6 +390,7 @@
                                                 (expt radix exp))))
                        (forward*))
                   (when (and (not (zerop limit))
+                             (current)
                              (char-equal exponent-marker (current)))
                     (forward*)
                     (cond ((looking-at #\+)
@@ -463,6 +452,7 @@
            (float-features:bits-double-float #x7FF8000000000000)))))
 
 (defun make-scanset-scanner (scanset negationp suppressp field-width length-modifier)
+  (declare (ignore length-modifier))
   `(lambda ()
      (let ((result '()))
        (loop for char = (current)
@@ -479,6 +469,7 @@
                           '(push (coerce (reverse result) 'string) *result*))))))
 
 (defun make-string-scanner (suppressp field-width length-modifier)
+  (declare (ignore length-modifier))
   `(lambda ()
      ,(skip-ws)
      (if (not (isspace (current)))
@@ -496,13 +487,14 @@
          (warn "Can't match %s, got '~A'" (current)))))
 
 (defun make-character-scanner (suppressp field-width length-modifier)
+  (declare (ignore length-modifier))
   `(lambda ()
      (if (current)
          (let ((result '()))
            (loop for char = (current)
                  ,@(when field-width '(for count from 1))
                  until (or (null char)
-                           ,@(when field-width `((> count field-width))))
+                           ,@(when field-width `((> count ,field-width))))
                  do (push char result)
                     (forward)
                  finally ,(if suppressp
@@ -652,13 +644,6 @@ therefore we can scan with "%x: %8x %8x %4x %2x %5lu %s"
 
 ;;;;
 
-(defun scan (scanner string)
-  (let ((*string* string)
-        (*index* 0)
-        (*limit* (length string))
-        (*result* '()))
-    (funcall (compile nil scanner))
-    (reverse *result*)))
 
 (defclass my-converter (standard-converter)
   ())
@@ -667,3 +652,44 @@ therefore we can scan with "%x: %8x %8x %4x %2x %5lu %s"
                                     suppressp field-width length-modifier)
   (let ((form (make-integer-scanner suppressp field-width length-modifier :radix 10)))
     (subst `(convert-to-type (* sign result) :unsigned-int) '(* sign result) form :test #'equal)))
+
+(defun test-file (file)
+  (let ((total 0)
+        (passed 0)
+        (failed 0)
+        (skipped 0))
+  (with-open-file (s file)
+    (loop for line = (read-line s nil nil)
+          while line
+          do (unless (or (zerop (length line))
+                         (char= #\# (char line 0)))
+               (with-input-from-string (s line)
+                 (let ((number (read s))
+                       (input-string (read s))
+                       (control-string (read s))
+                       (results (read s)))
+                   (incf total)
+                   (handler-case
+                       (let ((test-results
+                               (sscanf input-string control-string)))
+                         (if (equalp test-results results)
+                             (progn
+                               (princ #\Check_mark)
+                               (princ #\Space)
+                               (incf passed))
+                             (progn
+                               (format t "~%Failed:  ~D~
+                                          ~%Control: ~S~
+                                          ~%Input:   ~S~
+                                          ~%Wanted:  ~S~
+                                          ~%Got:     ~S~%"
+                                       number control-string input-string
+                                       results test-results)
+                               (incf failed))))
+                     (error (e)
+                       (format t "~%Failed:  ~D~
+                                  ~%Error: [~S] ~A"
+                               number e e)
+                       (incf failed))))))
+          finally (format t "~%Tests ~D/~D; Passed ~D; Failed ~D~%"
+                          total skipped passed failed)))))

@@ -4,11 +4,13 @@
            #:sscanf
            #:fscanf
 
-           #:create-scanner
+           #:compile-control-string
 
            #:collect-length-modifier
            #:collect-conversion-specifier
+           #:collect-scanset
            #:collect-field-width
+           #:make-conversion-scanner
 
            #:standard-converter
 
