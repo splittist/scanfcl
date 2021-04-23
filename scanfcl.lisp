@@ -50,6 +50,14 @@
 (defgeneric make-conversion-scanner (converter conversion-specifier suppressp field-width length-modifier)
   (:documentation "Return a scanner, a function of no arguments returning an appropriate value from `*string*` given the arguments."))
 
+(define-condition scanfcl-error (error)
+  ((conversion-specifier :reader conversion-specifier :initarg :conversion-specifier)
+   (reason :reader reason :initarg :reason))
+  (:report (lambda (condition stream)
+             (format stream "when converting '~A', ~A"
+                     (conversion-specifier condition)
+                     (reason condition)))))
+
 (defclass standard-converter ()
   ())
 
@@ -245,7 +253,8 @@
   `(lambda ()
      (if (looking-at ,char)
          (forward)
-         (warn "Couldn't match char '~C'" ,char))))
+         (error 'scanfcl-error :conversion-specifier "%c"
+                :reason (format nil "no match for '~C'" ,char)))))
 
 (defun make-integer-scanner (suppressp field-width length-modifier &key radix)
   (declare (ignore length-modifier))
@@ -266,7 +275,7 @@
                  (when (or (looking-at #\x)
                            (looking-at #\X))
                    (forward*)))))
-         (if (digit-char-p (current) ,radix)
+         (if (or (null (current)) (digit-char-p (current) ,radix))
              (loop for char = (current)
                    until (or (null char)
                              (not (digit-char-p char ,radix))
@@ -274,7 +283,8 @@
                    do (setf result (+ (* result ,radix) (digit-char-p char ,radix)))
                       (forward*)
                    finally ,(if suppressp '(values) '(push (* sign result) *result*)))
-             (warn "Can't match %d, got '~A'" (current)))))))
+             (error 'scanfcl-error :conversion-specifier "%o/u/x"
+                                   :reason (format nil "no match with '~A'" (current))))))))
 
 (defun make-signed-integer-scanner (suppressp field-width length-modifier)
   (declare (ignore length-modifier))
@@ -297,15 +307,16 @@
                      (looking-at #\X))
              (forward*)
              (setf radix 16)))
-         (if (digit-char-p (current) radix)
+         (if (or (null (current)) (digit-char-p (current) radix))
              (loop for char = (current)
                    until (or (null char)
                              (not (digit-char-p char radix))
                              (zerop limit))
                    do (setf result (+ (* result radix) (digit-char-p char radix)))
-                      (forward)
-                   finally ,(if suppressp '(values) '(push (* sign result) *result*))))
-         (warn "Can't match %i, got '~A'" (current))))))
+                      (forward*)
+                   finally ,(if suppressp '(values) '(push (* sign result) *result*)))
+             (error 'scanfcl-error :conversion-specifier "%d/i"
+                                   :reason (format nil "no match with '~A'" (current))))))))
 
 (defun make-floating-point-scanner (suppressp field-width length-modifier)
   `(lambda ()
@@ -333,7 +344,8 @@
                                (if (plusp sign)
                                    (setf result (positive-infinity ,length-modifier))
                                    (setf result (negative-infinity ,length-modifier)))
-                               (error "Can't match (inf) float, got '~A'" (current)))))
+                               (error 'scanfcl-error :conversion-specifier "%a/e/f/g"
+                                      :reason "no match for infinity"))))
                ((or (looking-at #\N)
                     (looking-at #\n))
                 (loop for char = (current)
@@ -352,9 +364,11 @@
                                       do (forward*))
                                    (if (looking-at #\) )
                                        (forward*)
-                                       (error "Can't match (nan) float, got '~A'" (current))))
+                                       (error 'scanfcl-error :conversion-specifier "%a/e/f/g"
+                                              :reason "no match for nan(...)")))
                                   (setf result (nan ,length-modifier)))
-                               (error "Can't match (nan) float, got '~A'" (current)))))
+                               (error 'scanfcl-error :conversion-specifier "%a/e/f/g"
+                                      :reason "no match for nan"))))
                (t
                 (let ((significand 0)
                       (exponent 0)
@@ -490,11 +504,12 @@
   (declare (ignore length-modifier))
   `(lambda ()
      (if (current)
-         (let ((result '()))
+         (let ((result '())
+               (field-width (or ,field-width 1)))
            (loop for char = (current)
-                 ,@(when field-width '(for count from 1))
+                 for count from 1
                  until (or (null char)
-                           ,@(when field-width `((> count ,field-width))))
+                           (> count field-width))
                  do (push char result)
                     (forward)
                  finally ,(if suppressp
@@ -688,7 +703,7 @@ therefore we can scan with "%x: %8x %8x %4x %2x %5lu %s"
                                (incf failed))))
                      (error (e)
                        (format t "~%Failed:  ~D~
-                                  ~%Error: [~S] ~A"
+                                  ~%Error: [~S] ~A~%"
                                number e e)
                        (incf failed))))))
           finally (format t "~%Tests ~D/~D; Passed ~D; Failed ~D~%"
