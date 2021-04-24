@@ -1,12 +1,12 @@
 (in-package #:scanfcl)
 
 (defun sscanf (input-string control-string)
-  "Parses formatted input text, reading characters from *input-string* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *scanner* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-string* as a list."
+  "Parses formatted input text, reading characters from *input-string* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-string* as a list."
   (with-input-from-string (*standard-input* input-string)
     (scanf control-string)))
 
 (defun fscanf (input-stream control-string)
-  "Parses formatted input text, reading characters from *input-stream* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *scanner* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-stream* as a list."
+  "Parses formatted input text, reading characters from *input-stream* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-stream* as a list."
   (let ((*standard-input* input-stream))
     (scanf control-string)))
 
@@ -14,7 +14,7 @@
   "The results of scanning `*string*` so far.")
 
 (defun scanf (control-string)
-  "Parses formatted iput text, reading characters from `*STANDARD-INPUT*` and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *scanner* (see `COMPILE-CONTROL-STRING`). Returns the items converted from `*STANDARD-INPUT*` as a list."
+  "Parses formatted input text, reading characters from `*STANDARD-INPUT*` and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from `*STANDARD-INPUT*` as a list."
   (let ((control-string
           (etypecase control-string
             (string (compile-control-string control-string))
@@ -245,20 +245,14 @@
          while (isspace char)
          do (forward)))
 
-(defun make-ws-matcher ()
-  `(lambda ()
-     ,(skip-ws)))
-
 (defun make-char-matcher (char)
-  `(lambda ()
-     (if (looking-at ,char)
+  `(if (looking-at ,char)
          (forward)
-         (error 'scanfcl-error :conversion-specifier "%c"
-                :reason (format nil "no match for '~C'" ,char)))))
+         (return (reverse *result*))))
 
 (defun make-integer-scanner (suppressp field-width length-modifier &key radix)
   (declare (ignore length-modifier))
-  `(lambda ()
+  `(progn
      ,(skip-ws)
      (let ((sign 1)
            (result 0)
@@ -283,12 +277,11 @@
                    do (setf result (+ (* result ,radix) (digit-char-p char ,radix)))
                       (forward*)
                    finally ,(if suppressp '(values) '(push (* sign result) *result*)))
-             (error 'scanfcl-error :conversion-specifier "%o/u/x"
-                                   :reason (format nil "no match with '~A'" (current))))))))
+             (return (reverse *result*)))))))
 
 (defun make-signed-integer-scanner (suppressp field-width length-modifier)
   (declare (ignore length-modifier))
-  `(lambda ()
+  `(progn
      ,(skip-ws)
      (let ((sign 1)
            (radix 10)
@@ -315,16 +308,19 @@
                    do (setf result (+ (* result radix) (digit-char-p char radix)))
                       (forward*)
                    finally ,(if suppressp '(values) '(push (* sign result) *result*)))
-             (error 'scanfcl-error :conversion-specifier "%d/i"
-                                   :reason (format nil "no match with '~A'" (current))))))))
+             (return (reverse *result*)))))))
 
 (defun make-floating-point-scanner (suppressp field-width length-modifier)
-  `(lambda ()
+  `(progn
      ,(skip-ws)
      (let ((sign 1d0)
            (limit ,(if field-width field-width -1)) ; FIXME - hacky
+           (saw-something-p nil)
            (result nil))
-       (labels ((forward* () (forward) (decf limit)))
+       (labels ((forward* ()
+                  (forward)
+                  (decf limit)
+                  (setf saw-something-p t)))
          (cond ((looking-at #\+)
                 (forward*))
                ((looking-at #\-)
@@ -344,8 +340,7 @@
                                (if (plusp sign)
                                    (setf result (positive-infinity ,length-modifier))
                                    (setf result (negative-infinity ,length-modifier)))
-                               (error 'scanfcl-error :conversion-specifier "%a/e/f/g"
-                                      :reason "no match for infinity"))))
+                               (return (reverse *result*)))))
                ((or (looking-at #\N)
                     (looking-at #\n))
                 (loop for char = (current)
@@ -364,11 +359,9 @@
                                       do (forward*))
                                    (if (looking-at #\) )
                                        (forward*)
-                                       (error 'scanfcl-error :conversion-specifier "%a/e/f/g"
-                                              :reason "no match for nan(...)")))
-                                  (setf result (nan ,length-modifier)))
-                               (error 'scanfcl-error :conversion-specifier "%a/e/f/g"
-                                      :reason "no match for nan"))))
+                                       (return (reverse *result*))))
+                                 (setf result (nan ,length-modifier)))
+                               (return (reverse *result*)))))
                (t
                 (let ((significand 0)
                       (exponent 0)
@@ -412,15 +405,20 @@
                           ((looking-at #\-)
                            (setf exponent-sign -1)
                            (forward*)))
-                    (loop for char = (current) ; FIXME? limit of digits based on length modifier?
+                    (loop for char = (current)
                        until (or (null char)
                                  (not (digit-char-p char))
                                  (zerop limit))
                        do (setf exponent
                                 (+ (* exponent 10) (digit-char-p char)))
                            (forward*)))
-                  (setf result
-                        (* sign significand (expt (if (= radix 16) 2 10) (* exponent-sign exponent)))))))
+                  (if saw-something-p
+                      (setf result
+                            (* sign
+                               significand
+                               (expt (if (= radix 16) 2 10)
+                                     (* exponent-sign exponent))))
+                      (return (reverse *result*))))))
          ,(if suppressp
               '(values)
               '(push result *result*))))))
@@ -467,24 +465,23 @@
 
 (defun make-scanset-scanner (scanset negationp suppressp field-width length-modifier)
   (declare (ignore length-modifier))
-  `(lambda ()
-     (let ((result '()))
-       (loop for char = (current)
-             ,@(when field-width '(for count from 1))
-             until (or (null char)
-                       ,@(when field-width `((> count ,field-width)))
-                       ,(if negationp
-                            `(member char ',scanset)
-                            `(not (member char ',scanset))))
-             do (push char result)
-                (forward)
-             finally ,(if suppressp
-                          '(values)
-                          '(push (coerce (reverse result) 'string) *result*))))))
+  `(let ((result '()))
+     (loop for char = (current)
+           ,@(when field-width '(for count from 1))
+           until (or (null char)
+                     ,@(when field-width `((> count ,field-width)))
+                     ,(if negationp
+                          `(member char ',scanset)
+                          `(not (member char ',scanset))))
+           do (push char result)
+              (forward)
+           finally ,(if suppressp
+                        '(values)
+                        '(push (coerce (reverse result) 'string) *result*)))))
 
 (defun make-string-scanner (suppressp field-width length-modifier)
   (declare (ignore length-modifier))
-  `(lambda ()
+  `(progn
      ,(skip-ws)
      (if (not (isspace (current)))
          (let ((result '()))
@@ -498,27 +495,26 @@
                  finally ,(if suppressp
                               '(values)
                               '(push (coerce (reverse result) 'string) *result*))))
-         (warn "Can't match %s, got '~A'" (current)))))
+         (return (reverse *result*))))) ; FIXME or EOF?
 
 (defun make-character-scanner (suppressp field-width length-modifier)
   (declare (ignore length-modifier))
-  `(lambda ()
-     (if (current)
-         (let ((result '())
-               (field-width (or ,field-width 1)))
-           (loop for char = (current)
-                 for count from 1
-                 until (or (null char)
-                           (> count field-width))
-                 do (push char result)
-                    (forward)
-                 finally ,(if suppressp
-                              '(values)
-                              '(push (make-array (length result)
-                                      :initial-contents (reverse result)
-                                      :element-type 'character)
-                                *result*))))
-         (warn "Can't match %s, got '~A'" (current)))))
+  `(if (current)
+       (let ((result '())
+             (field-width (or ,field-width 1)))
+         (loop for char = (current)
+               for count from 1
+               until (or (null char)
+                         (> count field-width))
+               do (push char result)
+                  (forward)
+               finally ,(if suppressp
+                            '(values)
+                            '(push (make-array (length result)
+                                    :initial-contents (reverse result)
+                                    :element-type 'character)
+                              *result*))))
+       (return (reverse *result*))))
 
 (defun create-scanner (control-string)
   (let ((forms '())
@@ -543,12 +539,13 @@
                       (loop while (and (< control-string-index (length control-string))
                                        (isspace (char control-string control-string-index)))
                             do (incf control-string-index)))
-                    (push (make-ws-matcher) forms))
+                    (push (skip-ws) forms))
                    (t
                     (incf control-string-index)
                     (push (make-char-matcher char) forms))))
-    `(lambda () ,@(loop for f in (reverse forms)
-                         collecting `(funcall ,f)))))
+    `(lambda ()
+       (block nil
+         ,@(reverse forms)))))
 
 
 ;;;;

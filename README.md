@@ -1,6 +1,6 @@
 # scanfcl
 
-An implementation of `sscanf` in Common Lisp.
+An implementation of the `scanf` family in Common Lisp.
 
 ## Quickstart
 
@@ -23,15 +23,23 @@ SCANFCL> (sscanf "-INFINITY NAN 0xDEAD.BEEFpFF" "%Lf %f %lf")
 
 ## Introduction
 
-Sometimes you just want to reproduce the effect of `C`-style `scanf` input without having to write your own parser. **scanfcl** reproduces the effect of `sscanf` conversion from lisp strings to lisp objects. Most of the standard 'C99' conversion specifiers are supported.
+Sometimes you just want to reproduce the effect of `C`-style `scanf` input without having to write your own parser. **scanfcl** reproduces the effect of `scanf`, `sscanf` and `fscanf` conversion from lisp strings to lisp objects. Most of the standard 'C99' conversion specifiers are supported.
 
 **scanfcl** depends on [Float Features](https://shinmera.github.io/float-features/) and has an MIT licence.
 
 ## Functions
 
+*function* **SCANF** `control-string`
+
+Parses formatted input text, reading characters from `*STANDARD-INPUT*` and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from `*STANDARD-INPUT*` as a list.
+
 *function* **SSCANF** `input-string` `control-string`
 
-Parses formatted input text, reading characters from *input-string* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control-string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-string* as a list. (If `control-string` is a literal string, a compiler macro will compile it.)
+Parses formatted input text, reading characters from *input-string* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-string* as a list.
+
+*function* **FSCANF** `input-stream` `control-string`
+
+Parses formatted input text, reading characters from *input-stream* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-stream* as a list.
 
 *function* **COMPILE-CONTROL-STRING** `control-string`
 
@@ -39,7 +47,7 @@ Returns a compiled function suitable for passing to `SSCANF`.
 
 ## Format
 
-The `control-string` specifies a *picture* of the input to matched. Characters (other than '`%`') are matched one-for-one, excpet that (any amount of) whitespace in the `control-string` will match any amount of whitespace in the `input-string`. The following description is valid for the **STANDARD-CONVERTER**. (See below at **Configuring** for more information on what this means.)
+The `control-string` specifies a *picture* of the input to matched. Characters (other than '`%`') are matched one-for-one, except that (any amount of) whitespace in the `control-string` will match any amount of whitespace in the `input-string`. If a match or conversion fails, the function returns. The following description is valid for the **STANDARD-CONVERTER**. (See below at **Configuring** for more information on what this means.)
 
 *Conversion specifiers* begin with a `%`, and are followed by (in order):
 
