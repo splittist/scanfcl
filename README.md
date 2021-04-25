@@ -105,7 +105,7 @@ The class upon which the default behaviour of **scanfcl** is specialised.
 
 Return two values: a representation of the *length modifier* (if any) in `control-string` starting at `control-string-index`; and the updated value of `control-string-index`.
 
-*generic function* **COLLECT-CONVERSION-SPECIFIER* `converter` `control-string` `control-string-index`
+*generic function* **COLLECT-CONVERSION-SPECIFIER** `converter` `control-string` `control-string-index`
 
 Return two values: a representation of the *conversion specifier* in `control-string` starting at `control-string-index`; and the updated value of `control-string-index`.
 
