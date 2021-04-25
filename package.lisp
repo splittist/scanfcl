@@ -6,6 +6,9 @@
 
            #:compile-control-string
 
+           #:create-scanner
+           #:*result*
+
            #:collect-length-modifier
            #:collect-conversion-specifier
            #:collect-scanset

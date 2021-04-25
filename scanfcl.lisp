@@ -1,5 +1,7 @@
 (in-package #:scanfcl)
 
+;;; PROTOCOL
+
 (defun sscanf (input-string control-string)
   "Parses formatted input text, reading characters from *input-string* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-string* as a list."
   (with-input-from-string (*standard-input* input-string)
@@ -11,7 +13,7 @@
     (scanf control-string)))
 
 (defparameter *result* nil
-  "The results of scanning `*string*` so far.")
+  "The results (in reverse) of scanning `*STANDARD-INPUT*` according to the current *control string* so far.")
 
 (defun scanf (control-string)
   "Parses formatted input text, reading characters from `*STANDARD-INPUT*` and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from `*STANDARD-INPUT*` as a list."
@@ -24,8 +26,40 @@
     (values (reverse *result*) (file-position *standard-input*))))
 
 (defun compile-control-string (control-string)
-  "Returns a function suitable for passing to `SCANF`, `SSCANF` and `FSCANF`."
+  "Returns a function created from *control-string* suitable for passing to `SCANF`, `SSCANF` and `FSCANF`."
   (compile nil (create-scanner control-string)))
+
+(defun create-scanner (control-string)
+  "Create a form from *control-string* suitable for passing to `COMPILE-CONTROL-STRING`."
+  (let ((forms '())
+        (control-string-index 0))
+    (loop while (< control-string-index (length control-string))
+          for char = (char control-string control-string-index)
+          do (cond ((char= #\% char)
+                    (incf control-string-index)
+                    (let ((next (char control-string control-string-index)))
+                      (if (char= #\% next)
+                          (progn
+                            (push (make-char-matcher #\%) forms)
+                            (incf control-string-index))
+                          (multiple-value-bind (form index)
+                              (handle-conversion-specification
+                               control-string control-string-index)
+                            (push form forms)
+                            (setf control-string-index index)))))
+                   ((isspace char)
+                    (incf control-string-index)
+                    (when (< control-string-index (length control-string))
+                      (loop while (and (< control-string-index (length control-string))
+                                       (isspace (char control-string control-string-index)))
+                            do (incf control-string-index)))
+                    (push (skip-ws) forms))
+                   (t
+                    (incf control-string-index)
+                    (push (make-char-matcher char) forms))))
+    `(lambda ()
+       (block nil
+         ,@(reverse forms)))))
 
 ;;; conversion specification
 ;;; #\% followed by:
@@ -48,15 +82,9 @@
   (:documentation "Return two values: the *field width* (if any) specified in `control-string` starting at `control-string-index`; and the udpated value of `control-string-index`."))
 
 (defgeneric make-conversion-scanner (converter conversion-specifier suppressp field-width length-modifier)
-  (:documentation "Return a scanner, a function of no arguments returning an appropriate value from `*string*` given the arguments."))
+  (:documentation "Return a scanner, a form reading from `*STANDARD-INPUT*` and pushing (or not) to result `*RESULT*` appropriately given the arguments. If conversion fails, should `(return (reverse *result*))` to exit early."))
 
-(define-condition scanfcl-error (error)
-  ((conversion-specifier :reader conversion-specifier :initarg :conversion-specifier)
-   (reason :reader reason :initarg :reason))
-  (:report (lambda (condition stream)
-             (format stream "when converting '~A', ~A"
-                     (conversion-specifier condition)
-                     (reason condition)))))
+;;; STANDARD-CONVERTER
 
 (defclass standard-converter ()
   ())
@@ -171,6 +199,10 @@
                                     suppressp field-width length-modifier)
   (make-integer-scanner suppressp field-width length-modifier :radix 16))
 
+(defmethod make-conversion-scanner ((converter standard-converter) (cs (eql :|X|))
+                                    suppressp field-width length-modifier)
+  (make-integer-scanner suppressp field-width length-modifier :radix 16))
+
 (defmethod make-conversion-scanner ((converter standard-converter) (cs (eql :|c|))
                                     suppressp field-width length-modifier)
   (make-character-scanner suppressp field-width length-modifier))
@@ -195,28 +227,23 @@
                                     suppressp field-width length-modifier)
   (make-floating-point-scanner suppressp field-width length-modifier))
 
-;;;;
-#|
+(defmethod make-conversion-scanner ((converter standard-converter) (cs (eql :|A|))
+                                    suppressp field-width length-modifier)
+  (make-floating-point-scanner suppressp field-width length-modifier))
 
-(defparameter *string* nil
-  "The string being scanned.")
+(defmethod make-conversion-scanner ((converter standard-converter) (cs (eql :|F|))
+                                    suppressp field-width length-modifier)
+  (make-floating-point-scanner suppressp field-width length-modifier))
 
-(defparameter *index* nil
-  "The point within `*string*` to which scanning has proceeded.")
+(defmethod make-conversion-scanner ((converter standard-converter) (cs (eql :|E|))
+                                    suppressp field-width length-modifier)
+  (make-floating-point-scanner suppressp field-width length-modifier))
 
-(defparameter *limit* nil
-  "The limiting index of `*string*`")
+(defmethod make-conversion-scanner ((converter standard-converter) (cs (eql :|G|))
+                                    suppressp field-width length-modifier)
+  (make-floating-point-scanner suppressp field-width length-modifier))
 
-(defun forward ()
-  (incf *index*))
-
-(defun current ()
-  (when (< *index* *limit*)
-    (char *string* *index*)))
-
-(defun looking-at (char)
-  (char= char (char *string* *index*)))
-|#
+;;;; SCANNERS
 
 (defun forward ()
   (read-char *standard-input* nil nil))
@@ -249,6 +276,59 @@
   `(if (looking-at ,char)
          (forward)
          (return (reverse *result*))))
+
+(defun make-scanset-scanner (scanset negationp suppressp field-width length-modifier)
+  (declare (ignore length-modifier))
+  `(let ((result '()))
+     (loop for char = (current)
+           ,@(when field-width '(for count from 1))
+           until (or (null char)
+                     ,@(when field-width `((> count ,field-width)))
+                     ,(if negationp
+                          `(member char ',scanset)
+                          `(not (member char ',scanset))))
+           do (push char result)
+              (forward)
+           finally ,(if suppressp
+                        '(values)
+                        '(push (coerce (reverse result) 'string) *result*)))))
+
+(defun make-string-scanner (suppressp field-width length-modifier)
+  (declare (ignore length-modifier))
+  `(progn
+     ,(skip-ws)
+     (if (not (isspace (current)))
+         (let ((result '()))
+           (loop for char = (current)
+                 ,@(when field-width '(for count from 1))
+              until (or (null char)
+                        (isspace char)
+                        ,@(when field-width `((> count ,field-width))))
+                 do (push char result)
+                    (forward)
+                 finally ,(if suppressp
+                              '(values)
+                              '(push (coerce (reverse result) 'string) *result*))))
+         (return (reverse *result*))))) ; FIXME or EOF?
+
+(defun make-character-scanner (suppressp field-width length-modifier)
+  (declare (ignore length-modifier))
+  `(if (current)
+       (let ((result '())
+             (field-width (or ,field-width 1)))
+         (loop for char = (current)
+               for count from 1
+               until (or (null char)
+                         (> count field-width))
+               do (push char result)
+                  (forward)
+               finally ,(if suppressp
+                            '(values)
+                            '(push (make-array (length result)
+                                    :initial-contents (reverse result)
+                                    :element-type 'character)
+                              *result*))))
+       (return (reverse *result*))))
 
 (defun make-integer-scanner (suppressp field-width length-modifier &key radix)
   (declare (ignore length-modifier))
@@ -463,92 +543,43 @@
            (warn "Inapplicble length modifier for float: '~A'" length-modifier)
            (float-features:bits-double-float #x7FF8000000000000)))))
 
-(defun make-scanset-scanner (scanset negationp suppressp field-width length-modifier)
-  (declare (ignore length-modifier))
-  `(let ((result '()))
-     (loop for char = (current)
-           ,@(when field-width '(for count from 1))
-           until (or (null char)
-                     ,@(when field-width `((> count ,field-width)))
-                     ,(if negationp
-                          `(member char ',scanset)
-                          `(not (member char ',scanset))))
-           do (push char result)
-              (forward)
-           finally ,(if suppressp
-                        '(values)
-                        '(push (coerce (reverse result) 'string) *result*)))))
-
-(defun make-string-scanner (suppressp field-width length-modifier)
-  (declare (ignore length-modifier))
-  `(progn
-     ,(skip-ws)
-     (if (not (isspace (current)))
-         (let ((result '()))
-           (loop for char = (current)
-                 ,@(when field-width '(for count from 1))
-              until (or (null char)
-                        (isspace char)
-                        ,@(when field-width `((> count ,field-width))))
-                 do (push char result)
-                    (forward)
-                 finally ,(if suppressp
-                              '(values)
-                              '(push (coerce (reverse result) 'string) *result*))))
-         (return (reverse *result*))))) ; FIXME or EOF?
-
-(defun make-character-scanner (suppressp field-width length-modifier)
-  (declare (ignore length-modifier))
-  `(if (current)
-       (let ((result '())
-             (field-width (or ,field-width 1)))
-         (loop for char = (current)
-               for count from 1
-               until (or (null char)
-                         (> count field-width))
-               do (push char result)
-                  (forward)
-               finally ,(if suppressp
-                            '(values)
-                            '(push (make-array (length result)
-                                    :initial-contents (reverse result)
-                                    :element-type 'character)
-                              *result*))))
-       (return (reverse *result*))))
-
-(defun create-scanner (control-string)
-  (let ((forms '())
-        (control-string-index 0))
-    (loop while (< control-string-index (length control-string))
-          for char = (char control-string control-string-index)
-          do (cond ((char= #\% char)
-                    (incf control-string-index)
-                    (let ((next (char control-string control-string-index)))
-                      (if (char= #\% next)
-                          (progn
-                            (push (make-char-matcher #\%) forms)
-                            (incf control-string-index))
-                          (multiple-value-bind (form index)
-                              (handle-conversion-specification
-                               control-string control-string-index)
-                            (push form forms)
-                            (setf control-string-index index)))))
-                   ((isspace char)
-                    (incf control-string-index)
-                    (when (< control-string-index (length control-string))
-                      (loop while (and (< control-string-index (length control-string))
-                                       (isspace (char control-string control-string-index)))
-                            do (incf control-string-index)))
-                    (push (skip-ws) forms))
-                   (t
-                    (incf control-string-index)
-                    (push (make-char-matcher char) forms))))
-    `(lambda ()
-       (block nil
-         ,@(reverse forms)))))
-
-
 ;;;;
+
+#|
+hh  Specifies that a following d, i, o, u, x, X, or n conversion specifier applies
+    to an argument with type pointer to signed char or unsigned char.
+
+h   Specifies that a following d, i, o, u, x, X, or n conversion specifier applies
+    to an argument with type pointer to short int or unsigned short
+    int.
+
+l (ell) Specifies that a following d, i, o, u, x, X, or n conversion specifier applies
+    to an argument with type pointer to long int or unsigned long
+    int; that a following a, A, e, E, f, F, g, or G conversion specifier applies to
+    an argument with type pointer to double; or that a following c, s, or [
+    conversion specifier applies to an argument with type pointer to wchar_t.
+
+ll (ell-ell) Specifies that a following d, i, o, u, x, X, or n conversion specifier applies
+    to an argument with type pointer to long long int or unsigned
+    long long int.
+
+j   Specifies that a following d, i, o, u, x, X, or n conversion specifier applies
+    to an argument with type pointer to intmax_t or uintmax_t.
+
+z   Specifies that a following d, i, o, u, x, X, or n conversion specifier applies
+    to an argument with type pointer to size_t or the corresponding signed
+    integer type.
+
+t   Specifies that a following d, i, o, u, x, X, or n conversion specifier applies
+    to an argument with type pointer to ptrdiff_t or the corresponding
+    unsigned integer type.
+
+L   Specifies that a following a, A, e, E, f, F, g, or G conversion specifier
+    applies to an argument with type pointer to long double.
+
+If a length modifier appears with any conversion specifier other than as specified above,
+the behavior is undefined.
+|#
 
 (defparameter *system-v*
   '(;(:_Bool 1)

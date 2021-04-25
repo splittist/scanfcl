@@ -43,7 +43,7 @@ Parses formatted input text, reading characters from *input-stream* and converti
 
 *function* **COMPILE-CONTROL-STRING** `control-string`
 
-Returns a compiled function suitable for passing to `SSCANF`.
+Returns a compiled function dervied from *control-string* suitable for passing to `SSCANF`.
 
 ## Format
 
@@ -57,9 +57,9 @@ The `control-string` specifies a *picture* of the input to matched. Characters (
 
 * An optional *length modifier* (one of `hh`, `h`, `l`, `ll`, `j`, `z`, `t` or `L`)
 
-* A required *conversion specifier* (one of `a`, `c`, `d`, `e`, `f`, `g`, `i`, `o`, `s`, `u`, `x` and `%`)
+* A required *conversion specifier* (one of `a`, `c`, `d`, `e`, `f`, `g`, `i`, `o`, `s`, `u`, `x` and `%`).
 
-Unlike C99, the STANDARD-CONVERTER does not accept `p` (pointer) or `n` conversions.
+Unlike C99, the STANDARD-CONVERTER does not accept `p` (pointer) or `n` conversions. It does accept the `X`, `A`, `E`, `F` and `G` conversions.
 
 For the meaning of the *conversion specifiers* please refer to the closest man page or language specification.
 
@@ -114,7 +114,16 @@ Return two values: the *field width* (if any) specified in `control-string` star
 
 *generic function* **MAKE-CONVERSION-SCANNER** `converter` `conversion-specifier` `suppressp` `field-width` `length-modifers`
 
-Return a scanner, a function of no arguments returning an appropriate value from `*string*` given the arguments.
+Return a scanner, a form reading from `*STANDARD-INPUT*` and pushing (or not) to result `*RESULT*` appropriately given the arguments. If conversion fails, should `(return (reverse *result*))` to exit early. See below for the meaning of `*RESULT*`.
+
+*function* **CREATE-SCANNER** `control-string`
+
+Returns a form created from *control-string* suitable for passing to `COMPILE-CONTROL-STRING`. Analyses *control-string*, handling ordinary characters and whitespace and disptaching (indirectly) to the generic functions below when encountering a *conversion specifier*.
+
+*special variable* **\*RESULT\***
+
+Dynamically bound to the (reversed) results of the processing of the input with the current *control string*. See `MAKE-CONVERSION-SCANNER` above.
+
 
 ## Example of Configuration
 

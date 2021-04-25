@@ -89,3 +89,16 @@
 086 "" "%g" ()
 087 "foo bar baz" "foo %*s %3c" ("baz")
 088 "foo bar baz" "%s %s %g" ("foo" "bar")
+089 "25 54.32E-1 thompson" "%d%f%s" (25 5.432d0 "thompson")
+090 "56789 0123 56a72" "%2d%f%*d  %[0123456789]" (56 789.0 "56")
+091 "2 quarts of oil" "%f%20s of %20s" (2 "quarts" "oil")
+092 "-12.8degrees Celsius" "%f%20s of %20s" (-12.8 "degrees")
+093 "lots of luck" "%f%20s of %20s" ()
+094 "10.0LBS     of        dirt" "%f%20s of %20s" (10.0 "LBS" "dirt")
+# The C standard says this should fail as '"100e" fails to match "%f"
+# but Harbison and Steele (5th) says "If no digits are seen after the
+# letter introducing the exponent, then the exponent part of the
+# representation is assumed to be zero." (p383)
+# They also say (same page) "If no digits are read ... then the
+# value is zero." This behaviour seems more useful.
+095 "100ergs of energy" "%f%20s of %20s" (100.0d0 "rgs" "energy")
