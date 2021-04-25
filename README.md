@@ -8,17 +8,22 @@ Clone this respository into your `quicklisp/local-projects` directory, then `(ql
 
 ```lisp
 SCANFCL> (sscanf "123 abc" "%d %s")
-
 (123 "abc")
+7
 
 SCANFCL> (let ((scanner (compile-control-string "%d %s")))
-            (sscanf "123 abc" scanner))
-
+           (with-input-from-string (s "123 abc")
+            (fscanf s scanner)))
 (123 "abc")
+7
 
-SCANFCL> (sscanf "-INFINITY NAN 0xDEAD.BEEFpFF" "%Lf %f %lf")
-
-(#.SB-EXT:DOUBLE-FLOAT-NEGATIVE-INFINITY #<SINGLE-FLOAT quiet NaN> 57005.745834350586d0)
+SCANFCL> (scanf "%Lf %f %lf")
+-INFINITY
+nan
+0xDEAD.BEEFpFF
+(#.SB-EXT:DOUBLE-FLOAT-NEGATIVE-INFINITY #<SINGLE-FLOAT quiet NaN>
+ 57005.745834350586d0)
+NIL
 ```
 
 ## Introduction
@@ -31,19 +36,19 @@ Sometimes you just want to reproduce the effect of `C`-style `scanf` input witho
 
 *function* **SCANF** `control-string`
 
-Parses formatted input text, reading characters from `*STANDARD-INPUT*` and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from `*STANDARD-INPUT*` as a list.
+Parses formatted input text, reading characters from `*STANDARD-INPUT*` and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from `*STANDARD-INPUT*` as a list; and, as a second value, the file position of the `*STANDARD-INPUT*` stream (whcih will probably be `NIL`).
 
 *function* **SSCANF** `input-string` `control-string`
 
-Parses formatted input text, reading characters from *input-string* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-string* as a list.
+Parses formatted input text, reading characters from *input-string* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-string* as a list; and, as a second value, the position in `input-string` reached while parsing.
 
 *function* **FSCANF** `input-stream` `control-string`
 
-Parses formatted input text, reading characters from *input-stream* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-stream* as a list.
+Parses formatted input text, reading characters from *input-stream* and converting sequences of characters according to the *control-string* format. The *control-string* can be a string or a *compiled control string* (see `COMPILE-CONTROL-STRING`). Returns the items converted from the *input-stream* as a list; and, as a second value, the file position of *input-stream* after parsing.
 
 *function* **COMPILE-CONTROL-STRING** `control-string`
 
-Returns a compiled function dervied from *control-string* suitable for passing to `SSCANF`.
+Returns a compiled function dervied from *control-string* suitable for passing to `SCANF`, `SSCANF` or `FSCANF`.
 
 ## Format
 
@@ -69,7 +74,7 @@ The format of `/proc/net/unix` is defined in the `unix_seq_show()` function of t
 
     "%pK: %08X %08X %08X %04X %02X %5lu"
 
-followed by a space and a path string (where `K` is a special kernel format we can treat as `x`).
+followed by a space and a path string (where `pK` is a special kernel format we can treat as `x`).
 
 Therefore we can scan lines with the *control-string*:
 
@@ -86,7 +91,7 @@ SCANFCL> (sscanf "000000004713b902: 00000002 00000000 00010000 0005 01 19462 /ru
 
 ## Configuring
 
-**scanfcl** provides some measure of control over how *control-strings* are processed. Configuration is accomplished by specialising generic functions on a *converter* class with an instanct bound to `*CONVERTER*`. By default this is an instance of `STANDARD-CONVERTER`.
+**scanfcl** provides some measure of control over how *control strings* are processed. Configuration is accomplished by specialising generic functions on a *converter* class with an instance bound to `*CONVERTER*`. By default this is an instance of `STANDARD-CONVERTER`.
 
 *special variable* **\*CONVERTER\***
 
@@ -106,7 +111,7 @@ Return two values: a representation of the *conversion specifier* in `control-st
 
 *generic function* **COLLECT-SCANSET** `converter` `control-string` `control-string-index`
 
-Return two values: a two-item list of a *scanset* (suitable for consumption by `MAKE-CONVERSION-SCANNER` as part of a *conversion-specifier*) and a boolean indicating whether the scanset is negated; and the updated value of `control-string-index`.
+Return two values: a two-item list of a *scanset* (suitable for consumption by `MAKE-CONVERSION-SCANNER` as part of a *conversion specifier*) and a boolean indicating whether the scanset is negated; and the updated value of `control-string-index`.
 
 *generic function* **COLLECT-FIELD-WIDTH** `converter` `control-string` `control-string-index`
 
@@ -114,16 +119,15 @@ Return two values: the *field width* (if any) specified in `control-string` star
 
 *generic function* **MAKE-CONVERSION-SCANNER** `converter` `conversion-specifier` `suppressp` `field-width` `length-modifers`
 
-Return a scanner, a form reading from `*STANDARD-INPUT*` and pushing (or not) to result `*RESULT*` appropriately given the arguments. If conversion fails, should `(return (reverse *result*))` to exit early. See below for the meaning of `*RESULT*`.
+Return a scanner, a form reading from `*STANDARD-INPUT*` and pushing (or not) the result on `*RESULT*` given the arguments. If conversion fails, should `(return (reverse *result*))` to exit early. See below for the meaning of `*RESULT*`.
 
 *function* **CREATE-SCANNER** `control-string`
 
-Returns a form created from *control-string* suitable for passing to `COMPILE-CONTROL-STRING`. Analyses *control-string*, handling ordinary characters and whitespace and disptaching (indirectly) to the generic functions below when encountering a *conversion specifier*.
+Returns a form created from *control-string* suitable for passing to `COMPILE-CONTROL-STRING`. Analyses *control-string*, handling ordinary characters and whitespace and disptaching (indirectly) to the generic functions above when encountering a *conversion specifier*.
 
 *special variable* **\*RESULT\***
 
 Dynamically bound to the (reversed) results of the processing of the input with the current *control string*. See `MAKE-CONVERSION-SCANNER` above.
-
 
 ## Example of Configuration
 
